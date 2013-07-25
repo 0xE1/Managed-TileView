@@ -74,6 +74,7 @@ namespace TileView
             set
             {
                 m_VirtualListSize = value;
+                if (m_SelectedIndex >= m_VirtualListSize) SelectedIndex = -1; // we are setting public one so all events will be triggered properly
                 if (this.Size.IsEmpty) return;
                 UpdateAutoScrollSize();
             }
@@ -131,6 +132,7 @@ namespace TileView
             this.SetStyle(ControlStyles.UserMouse, true); // to make control focusable
             this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             this.SizeChanged += (o, e) => UpdateAutoScrollSize();
+            this.MouseDown += (o, e) => SelectedIndex = GetIndexAtLocation(e.Location);
 
             inputTimeoutTimer.Interval = 5000;
             inputTimeoutTimer.Elapsed += (o, e) => { input.Clear(); Debug.Print("Text input timeout"); inputTimeoutTimer.Stop(); };
@@ -153,7 +155,6 @@ namespace TileView
                 Debug.Print("KeyPress: Handled:{0}, KeyChar:{1}, input:{2}", e.Handled, e.KeyChar, input);
                 inputTimeoutTimer.Start();
             };
-            this.MouseDown += (o, e) => SelectedIndex = GetIndexAtLocation(e.Location);
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -179,6 +180,13 @@ namespace TileView
                 }
                 else if (VirtualListSize>0) // if there's no selection, select first item
                     SelectedIndex = 0;
+                return true;
+            }
+            else if (keyData == Keys.Escape && inputTimeoutTimer.Enabled)
+            {
+                Debug.Print("Text input canceled");
+                input.Clear();
+                inputTimeoutTimer.Stop();
                 return true;
             }
             else
