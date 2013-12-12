@@ -76,6 +76,7 @@ namespace TileView
                 m_VirtualListSize = value;
                 if (m_SelectedIndex >= m_VirtualListSize) SelectedIndex = -1; // we are setting public one so all events will be triggered properly
                 if (this.Size.IsEmpty) return;
+                cachedIndices.Clear();
                 UpdateAutoScrollSize();
             }
         }
@@ -84,12 +85,11 @@ namespace TileView
         {
             m_ItemsPerRow = this.DisplayRectangle.Width / m_TotalTileSize.Width;
             if (m_ItemsPerRow < 1) m_ItemsPerRow = 1; // bug from line above, but could not reproduce
-            this.AutoScrollMinSize = new Size(0, DivUp(m_VirtualListSize, m_ItemsPerRow) * m_TotalTileSize.Height); // for now we are suporting only Vertical scrolling.
+            this.AutoScrollMinSize = new Size(0, DivUp(m_VirtualListSize, m_ItemsPerRow) * m_TotalTileSize.Height); // for now we are supporting only Vertical scrolling.
             this.Invalidate();
         }
 
-        //private List<TileViewItem> cachedItems = new List<TileViewItem>();
-        //private int firstCachedIndex = -1;
+        private List<int> cachedIndices = new List<int>();
 
         //http://stackoverflow.com/questions/921180/how-can-i-ensure-that-a-division-of-integers-is-always-rounded-up/924160#924160
         private int DivUp(int a, int b)
@@ -240,6 +240,9 @@ namespace TileView
             int lines = ((int)(rect.Y + rect.Height - 1) / m_TotalTileSize.Height) - ((int)rect.Y / m_TotalTileSize.Height) + 1;
             int rows = (int)rect.Width / m_TotalTileSize.Width;
 
+            if (lines == 0) lines = 1; // Draw at last one item in visible area.
+            if (rows == 0) rows = 1;
+
             List<int> indices = new List<int>();
             int i;
             for (int l = line; l < line+lines; l++)
@@ -248,6 +251,7 @@ namespace TileView
                 {
                     i = l * m_ItemsPerRow + r;
                     if (i >= VirtualListSize) break;
+                    if (indices.Contains(i)) continue;
                     indices.Add(i);
                 }
             }
@@ -260,40 +264,26 @@ namespace TileView
         /// Backwards compatability with ListView DrawItem event. Warning: Have a hight chance to be changed in future.
         /// </summary>
         public event DrawItemEventHandler DrawItem;
+        public event CacheItemsEventHandler CacheItems;
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
             e.Graphics.TranslateTransform(this.AutoScrollPosition.X, this.AutoScrollPosition.Y);
             List<int> indices = GetVisibleIndices(e.Graphics.VisibleClipBounds);
-            //TODO: Decide, do we need caching? Probably need to provide an option.
-            /*if (indices.Count > 0)
+            if (CacheItems != null)
             {
-                if (cachedItems.Count < indices.Count) // cache more items?
+                Rectangle rect = this.Bounds;
+                rect.Offset(-this.AutoScrollPosition.X, -this.AutoScrollPosition.Y);
+                List<int> allIndices = GetVisibleIndices(rect);
+                if (allIndices.Count > 0 && (cachedIndices.Count == 0 || cachedIndices.Count < allIndices.Count || (cachedIndices[0] > allIndices[0] || cachedIndices[cachedIndices.Count - 1] < allIndices[allIndices.Count - 1])))
                 {
-                    cachedItems.Clear();
-                    foreach (int idx in indices)
-                        cachedItems.Add(new TileViewItem(idx.ToString(), idx.ToString()));
-                    firstCachedIndex = indices[0];
-                    Debug.Print("Updating cache: 1");
+                    CacheItemEventArgs ne = new CacheItemEventArgs(allIndices);
+                    CacheItems(this, ne);
+                    if (ne.Success)
+                        cachedIndices = allIndices;
                 }
-                else if (firstCachedIndex < indices[0] && firstCachedIndex + cachedItems.Count< indices[indices.Count-1])
-                {
-                    cachedItems.Clear();
-                    foreach (int idx in indices)
-                        cachedItems.Add(new TileViewItem(idx.ToString(), idx.ToString()));
-                    firstCachedIndex = indices[0];
-                    Debug.Print("Updating cache: 2");
-                }
-                else if (firstCachedIndex + indices.Count - 1 > indices[indices.Count - 1])
-                {
-                    cachedItems.Clear();
-                    foreach (int idx in indices)
-                        cachedItems.Add(new TileViewItem(idx.ToString(), idx.ToString()));
-                    firstCachedIndex = indices[0];
-                    Debug.Print("Updating cache: 3");
-                }
-            }*/
+            }
             
             foreach(int i in indices)
             {
@@ -316,10 +306,10 @@ namespace TileView
 
                     //TODO: Rewrite text drawing completely
                     string text = i.ToString();
-                    SizeF ts = e.Graphics.MeasureString(text, SystemFonts.DefaultFont);
+                    SizeF ts = e.Graphics.MeasureString(text, this.Font);
                     Point tp = new Point(mp.X + m_TileSize.Width / 2 - (int)ts.Width / 2, mp.Y + m_TilePadding.Top + m_TileSize.Height + (int)ts.Height / 2);
 
-                    e.Graphics.DrawString(i.ToString(), SystemFonts.DefaultFont, Brushes.Black, tp.X, tp.Y); // text
+                    e.Graphics.DrawString(i.ToString(), this.Font, Brushes.Black, tp.X, tp.Y); // text
                 }
             }
             //e.Graphics.DrawRectangle(new Pen(Color.FromArgb(64, Color.Black),1), new Rectangle(new Point((int)e.Graphics.ClipBounds.Location.X, (int)e.Graphics.ClipBounds.Location.Y), new Size((int)e.Graphics.ClipBounds.Width - 1, (int)e.Graphics.ClipBounds.Height-1)));
