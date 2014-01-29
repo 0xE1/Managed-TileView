@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Text;
+using System.Linq;
 using System.Windows.Forms;
 using System.Diagnostics;
 
@@ -17,33 +18,38 @@ namespace TileView
         /// Backwards compatability with ListView ItemSelectionChanged event. Warning: Have a hight chance to be changed in future.
         /// </summary>
         public event ListViewItemSelectionChangedEventHandler ItemSelectionChanged;
+        public event FocusSelectionChangedEventHandler FocusSelectionChanged;
 
-        //TODO: Extend for multi-selection list
-        private int m_SelectedIndex = -1;
+        public IndicesCollection SelectedIndices = new IndicesCollection();
+
+        private int m_FocusIndex = -1;
         /// <summary>
         /// Get or Set SelectedIndex, setting this property to -1 will remove selection, -2 is reserved for "do nothing".
         /// </summary>
-        public int SelectedIndex
+        public int FocusIndex
         {
-            get { return m_SelectedIndex; }
+            get { return m_FocusIndex; }
             set
             {
                 if (value >= VirtualListSize) throw new ArgumentOutOfRangeException("value");
-                if (m_SelectedIndex != value)
+                if (m_FocusIndex != value)
                 {
                     if (value == -2) return;
-                    int oldidx = m_SelectedIndex;
-                    m_SelectedIndex = value;
-                    if (ItemSelectionChanged != null)
+                    int oldidx = m_FocusIndex;
+                    m_FocusIndex = value;
+                    /*if (ItemSelectionChanged != null)
                     {
                         foreach (Delegate del in ItemSelectionChanged.GetInvocationList())
                         {
                             del.DynamicInvoke(this, new ListViewItemSelectionChangedEventArgs(null, m_SelectedIndex, true));
                         }
-                    }
+                    }*/
 
                     if (oldidx != -1)
                         RedrawItem(oldidx);
+
+                    if (FocusSelectionChanged != null)
+                        FocusSelectionChanged.Invoke(this, new EventArgs());
 
                     if (value != -1)
                     {
@@ -51,13 +57,14 @@ namespace TileView
                         // Scroll to item if it's out of view
                         Point p = GetItemLocation(value);
                         int y = -this.AutoScrollPosition.Y;
-                        if (y > p.Y)
+                        if (y == p.Y) return;
+                        else if (y > p.Y)
                         {
                             this.AutoScrollPosition = new Point(0, p.Y);
                         }
-                        else if (p.Y - y + m_TotalTileSize.Height > this.Height)
-                        {
-                            this.AutoScrollPosition = new Point(0, p.Y + m_TotalTileSize.Height - this.Height);
+                        else if (p.Y - y + TotalTileSize.Height > this.Height)
+                        {//TODO: correct slight misspositioning while this.Height (control) is less than m_TotalTileSize.Height
+                            this.AutoScrollPosition = new Point(0, p.Y + TotalTileSize.Height - this.Height);
                         }
                     }
                 }
@@ -74,18 +81,27 @@ namespace TileView
             set
             {
                 m_VirtualListSize = value;
-                if (m_SelectedIndex >= m_VirtualListSize) SelectedIndex = -1; // we are setting public one so all events will be triggered properly
+                if (m_FocusIndex >= m_VirtualListSize) FocusIndex = -1; // we are setting public one so all events will be triggered properly
                 if (this.Size.IsEmpty) return;
+                SelectedIndices.Clear();
                 cachedIndices.Clear();
                 UpdateAutoScrollSize();
             }
         }
 
+        /// <summary>
+        /// This function is being called whenever anything related to size of Tile or VirtualListSize is changed. It also updated ItemsPerRow value.
+        /// </summary>
+        /// <returns></returns>
         private void UpdateAutoScrollSize()
         {
-            m_ItemsPerRow = this.DisplayRectangle.Width / m_TotalTileSize.Width;
-            if (m_ItemsPerRow < 1) m_ItemsPerRow = 1; // bug from line above, but could not reproduce
-            this.AutoScrollMinSize = new Size(0, DivUp(m_VirtualListSize, m_ItemsPerRow) * m_TotalTileSize.Height); // for now we are supporting only Vertical scrolling.
+            if (m_VirtualListSize == 0 || this.Size.IsEmpty) return;
+            
+            m_ItemsPerRow = this.DisplayRectangle.Width / TotalTileSize.Width;
+            
+            //if (m_ItemsPerRow < 1) m_ItemsPerRow = 1; // bug from line above, but could not reproduce
+            this.AutoScrollMinSize = new Size(0, DivUp(m_VirtualListSize, m_ItemsPerRow) * TotalTileSize.Height); // for now we are supporting only Vertical scrolling.
+
             this.Invalidate();
         }
 
@@ -99,31 +115,45 @@ namespace TileView
             return r;
         }
 
-        private Size m_TotalTileSize = new Size(256 + 4 + 4, 256 + 4 + 32);
-        public Size TotalTileSize { get { return m_TotalTileSize; } }
+        /*//private static Size m_TotalTileSize = new Size(m_TileSize.Width + m_TileMargin.Horizontal + m_TilePadding.Horizontal, m_TileSize.Height + m_TileMargin.Vertical + m_TilePadding.Vertical);//new Size(256 + 4 + 4, 256 + 4 + 32);
+        //public Size TotalTileSize { get { return m_TotalTileSize; } }
+        public Size TotalTileSize { get { return new Size(m_TileSize.Width + m_TileMargin.Horizontal + m_TilePadding.Horizontal, m_TileSize.Height + m_TileMargin.Vertical + m_TilePadding.Vertical); } }
         private void UpdateTotalTileSize() { m_TotalTileSize = new Size(m_TileSize.Width + m_TileMargin.Horizontal + m_TilePadding.Horizontal, m_TileSize.Height + m_TileMargin.Vertical + m_TilePadding.Vertical); UpdateAutoScrollSize(); }
+        */
 
+        //TODO: Do a performance check of TotalTileSize getter
+        public Size TotalTileSize { get { return new Size(m_TileSize.Width + m_TileMargin.Horizontal + m_TilePadding.Horizontal + (int)(m_TileBorder.Width * 2), m_TileSize.Height + m_TileMargin.Vertical + m_TilePadding.Vertical + (int)(m_TileBorder.Width * 2)); } }
         private Size m_TileSize = new Size(256, 256);
-        public Size TileSize { get { return m_TileSize; } set { m_TileSize = value; UpdateTotalTileSize(); } }
+        public Size TileSize { get { return m_TileSize; } set { m_TileSize = value; UpdateAutoScrollSize(); } } //UpdateTotalTileSize();
+        private  Padding m_TileMargin = new Padding(2, 2, 2, 2); // external
+        public Padding TileMargin { get { return m_TileMargin; } set { m_TileMargin = value; UpdateAutoScrollSize(); } } //UpdateTotalTileSize();
+        private  Padding m_TilePadding =new Padding(2, 2, 2, 5+15 * 2); // inner // 5=padding from bottom, 15*n=text
+        public Padding TilePadding { get { return m_TilePadding; } set { m_TilePadding = value; UpdateAutoScrollSize(); } } //UpdateTotalTileSize();
 
-        private Padding m_TileMargin = new Padding(2, 2, 2, 2); // external
-        public Padding TileMargin { get { return m_TileMargin; } set { m_TileMargin = value; UpdateTotalTileSize(); } }
+        private Pen m_TileBorder = new Pen(Brushes.Black, 1.0f);
 
-        private Padding m_TilePadding = new Padding(2, 2, 2, 15*3); // inner
-        public Padding TilePadding { get { return m_TilePadding; } set { m_TilePadding = value; UpdateTotalTileSize(); } }
+        public float TileBorderWidth { get { return m_TileBorder.Width; } set { m_TileBorder.Width = value; UpdateAutoScrollSize(); } }
 
-        private Brush m_HighlightColor = SystemBrushes.Highlight;
+        public Color TileBorderColor { get { return m_TileBorder.Color; } set { m_TileBorder.Color = value; if (m_TileBorder.Width>0) this.Invalidate(); } }
+
+        private Brush m_TileHighlightColor = SystemBrushes.Highlight;
         /// <summary>
         /// Color of selected item background
         /// </summary>
-        public Brush HighlightColor { get { return m_HighlightColor; } set { m_HighlightColor = value; if (m_SelectedIndex != -1) RedrawItem(m_SelectedIndex); } }
+        public Brush TileHighlightColor { get { return m_TileHighlightColor; } set { m_TileHighlightColor = value; if (SelectedIndices.Count > 0) RedrawItems(SelectedIndices.ToList()); } }
 
         /// <summary>
         /// Backwards compatability with ListView SearchForVirtualItem event. Warning: Have a hight chance to be changed in future.
         /// </summary>
         public event SearchForVirtualItemEventHandler SearchForVirtualItem;
-        private System.Timers.Timer inputTimeoutTimer = new System.Timers.Timer();
+        private System.Timers.Timer inputTimeoutTimer = new System.Timers.Timer(2000);
         private StringBuilder input = new StringBuilder(255);
+
+        /// <summary>
+        /// Get or Set Timeout interval for Input.
+        /// In Milliseconds. (2000 is default)
+        /// </summary>
+        public double InputTimeoutInterval { get { return inputTimeoutTimer.Interval; } set { inputTimeoutTimer.Interval = value; } }
 
         public TileViewControl()
         {
@@ -132,40 +162,70 @@ namespace TileView
             this.SetStyle(ControlStyles.UserMouse, true); // to make control focusable
             this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             this.SizeChanged += (o, e) => UpdateAutoScrollSize();
-            this.MouseDown += (o, e) => SelectedIndex = GetIndexAtLocation(e.Location);
+            this.MouseDown += (o, e) =>
+            {
+                int idx = GetIndexAtLocation(e.Location);
+                FocusIndex = idx;
+                if (idx != -2 && e.Button == System.Windows.Forms.MouseButtons.Left) // no Tile at given location
+                {
+                    SelectIndex(idx);
+                }
+            };
 
-            inputTimeoutTimer.Interval = 5000;
-            inputTimeoutTimer.Elapsed += (o, e) => { input.Clear(); Debug.Print("Text input timeout"); inputTimeoutTimer.Stop(); };
+            this.SelectedIndices.CollectionChanged += (o, e) => {
+                if (e.ItemsChanged.Count == 0) return;
+                RedrawItems(e.ItemsChanged);
+
+                if (ItemSelectionChanged != null)
+                {
+                    foreach (Delegate del in ItemSelectionChanged.GetInvocationList())
+                    {
+                        del.DynamicInvoke(this, new ListViewItemSelectionChangedEventArgs(null, e.ItemsChanged[0], (e.Action == IndicesCollection.NotifyCollectionChangedAction.Add ? true : false)));
+                    }
+                }
+            };
+
+            inputTimeoutTimer.AutoReset = false;
+            inputTimeoutTimer.Elapsed += (o, e) => { input.Clear(); Debug.Print("Text input timeout"); /*inputTimeoutTimer.Stop();*/ };
 
             this.KeyPress += (o, e) =>
             {
                 // here we'll handle input
                 // Backspace, remove last char if available
-                if (e.KeyChar == '\b' && input.Length > 0)
-                    input.Remove(input.Length - 1, 1);
-                else if (!char.IsControl(e.KeyChar))
-                    input.Append(e.KeyChar);
-                if (SearchForVirtualItem != null && input.Length > 0)
+                if (SearchForVirtualItem != null)
                 {
-                    SearchForVirtualItemEventArgs args = new SearchForVirtualItemEventArgs(false, true, false, input.ToString(), new Point(), SearchDirectionHint.Down, m_SelectedIndex);
-                    SearchForVirtualItem(this, args);
-                    if (args.Index != m_SelectedIndex && args.Index != -1) SelectedIndex = args.Index;
+                    if (e.KeyChar == '\b' && input.Length > 0)
+                        input.Remove(input.Length - 1, 1);
+                    else if (!char.IsControl(e.KeyChar))
+                        input.Append(e.KeyChar);
+                    if (input.Length > 0)
+                    {
+                        SearchForVirtualItemEventArgs args = new SearchForVirtualItemEventArgs(false, true, false, input.ToString(), new Point(), SearchDirectionHint.Down, m_FocusIndex);
+                        SearchForVirtualItem(this, args);
+                        if (args.Index != m_FocusIndex && args.Index != -1) FocusIndex = args.Index;
+                        e.Handled = true;
+                        if (inputTimeoutTimer.Enabled) inputTimeoutTimer.Stop();
+                        inputTimeoutTimer.Start();
+                    }
                 }
-                
-                Debug.Print("KeyPress: Handled:{0}, KeyChar:{1}, input:{2}", e.Handled, e.KeyChar, input);
-                inputTimeoutTimer.Start();
+
+                Debug.Print("KeyPress: Handled:{0}, KeyChar:{1}, Key:{2}, input:\"{3}\"", e.Handled, e.KeyChar, ((Enum)(Keys)e.KeyChar).ToString(), input);
             };
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            //Debug.Print("ProcessCmdKey: Msg:{0}, LParam:{1}, WParam:{2}, KeyData:{3}", msg.Msg, msg.LParam, msg.WParam, keyData);
-            // Handling control keys so we can change selection with keys
+            /*if (Debugger.IsAttached)
+            {
+                Debugger.Log(0, "Info", "Key: " + keyData.ToString() + "(0x" + keyData.ToString("X") + ") -> '" + ((char)keyData).ToString() + "' -> " + ((Enum)keyData).ToString() + "\r\n");
+            }*/
+
+            // Handling control keys so we can change focus with keys
             if (keyData == Keys.Up || keyData == Keys.Down || keyData == Keys.Left || keyData == Keys.Right)
             {
-                if (m_SelectedIndex > -1)
+                if (m_FocusIndex > -1)
                 {
-                    int newidx = m_SelectedIndex;
+                    int newidx = m_FocusIndex;
                     switch (keyData)
                     {
                         case Keys.Left: if (newidx - 1 > -1) --newidx; break;
@@ -176,21 +236,58 @@ namespace TileView
 
                     //if (newidx < 0) newidx = 0;
                     //if (newidx > m_VirtualSize - 1) newidx = m_VirtualSize - 1;
-                    SelectedIndex = newidx;
+                    FocusIndex = newidx;
                 }
-                else if (VirtualListSize>0) // if there's no selection, select first item
-                    SelectedIndex = 0;
+                else if (VirtualListSize>0) // if there's no focus, focus on first item visible index
+                {
+                    FocusIndex = GetVisibleIndices(this.Bounds).First();
+                }
+                Debug.Print("Handled in CmdKey (Control Keys): " + ((Enum)keyData).ToString());
+                return true;
+            }
+                // (keyData & Keys.Space)==Keys.Space
+            else if ((keyData==Keys.Space || (keyData & Keys.Space) == Keys.Space && ((keyData & Keys.Shift) == Keys.Shift || (keyData & Keys.Control) == Keys.Control))
+                && input.Length == 0) //ISSUE: Selection via Space would not be handled if there's still an input available, so it would not work right after search
+            {
+                if (m_FocusIndex >= 0)
+                {
+                    SelectIndex(m_FocusIndex);
+                }
+                Debug.Print("Handled in CmdKey (Space): " + ((Enum)keyData).ToString());
                 return true;
             }
             else if (keyData == Keys.Escape && inputTimeoutTimer.Enabled)
             {
-                Debug.Print("Text input canceled");
+                Debug.Print("Text input canceled/reset");
                 input.Clear();
                 inputTimeoutTimer.Stop();
+                Debug.Print("Handled in CmdKey (Escape): " + ((Enum)keyData).ToString());
                 return true;
             }
             else
+            {
+                Debug.Print("Passed to base CmdKey: " + ((Enum)keyData).ToString());
                 return base.ProcessCmdKey(ref msg, keyData);
+            }
+        }
+
+        private void SelectIndex(int index)
+        {
+            switch (ModifierKeys)
+            {
+                case Keys.Control:
+                    if (SelectedIndices.Contains(index))
+                        SelectedIndices.Remove(index);
+                    else
+                        SelectedIndices.Add(index); break;
+                default:
+                    if (!SelectedIndices.Contains(index))
+                    {
+                        SelectedIndices.Clear();
+                        SelectedIndices.Add(index);
+                    }
+                    break;
+            }
         }
 
         /// <summary>
@@ -199,26 +296,29 @@ namespace TileView
         /// <param name="index"></param>
         public void RedrawItem(int index)
         {
-            Point p = new Point(index % m_ItemsPerRow * m_TotalTileSize.Width + this.AutoScrollPosition.X, index / m_ItemsPerRow * m_TotalTileSize.Height + this.AutoScrollPosition.Y);
-            this.Invalidate(new Rectangle(p, m_TotalTileSize));
+            Point p = new Point(index % m_ItemsPerRow * TotalTileSize.Width + this.AutoScrollPosition.X, index / m_ItemsPerRow * TotalTileSize.Height + this.AutoScrollPosition.Y);
+            this.Invalidate(new Rectangle(p, TotalTileSize));
+        }
+        public void RedrawItems(List<int> indices)
+        {
+            indices.ForEach(i => RedrawItem(i));
         }
 
         private Point GetItemLocation(int index)
         {
-            return new Point(index % m_ItemsPerRow * m_TotalTileSize.Width, index / m_ItemsPerRow * m_TotalTileSize.Height);
+            return new Point(index % m_ItemsPerRow * TotalTileSize.Width, index / m_ItemsPerRow * TotalTileSize.Height);
         }
 
         /// <summary>
-        /// Find index of Tile for given location. Return -2 if no Tile at given location.
+        /// Find index of Tile for given location.
         /// </summary>
         /// <param name="location"></param>
-        /// <returns>Index of Tile in location</returns>
+        /// <returns>Index of Tile in location. Return -2 if no Tile at given location.</returns>
         public int GetIndexAtLocation(Point location)
         {
-            int line = (location.Y + -this.AutoScrollPosition.Y) / m_TotalTileSize.Height;
-            int row = (location.X + -this.AutoScrollPosition.X)/ m_TotalTileSize.Width;
-
-            if (DivUp(location.X, m_TotalTileSize.Width) > m_ItemsPerRow) return -2;
+            int line = (location.Y + -this.AutoScrollPosition.Y) / TotalTileSize.Height;
+            int row = (location.X + -this.AutoScrollPosition.X) / TotalTileSize.Width;
+            if (DivUp(location.X, TotalTileSize.Width) > m_ItemsPerRow) return -2;
 
             int r = (line * m_ItemsPerRow + row);
             if (r >= VirtualListSize) return -2;
@@ -232,13 +332,13 @@ namespace TileView
         /// <returns>List of indices. Indices may have discontinuities.</returns>
         private List<int> GetVisibleIndices(RectangleF rect)
         {
-            int line = (int)rect.Y / m_TotalTileSize.Height;
-            int row = (int)rect.X / m_TotalTileSize.Width;
+            int line = (int)rect.Y / TotalTileSize.Height;
+            int row = (int)rect.X / TotalTileSize.Width;
             //int rem;
             //Math.DivRem(-this.AutoScrollPosition.Y, m_TotalTileSize.Height, out rem);
             //rem = (-this.AutoScrollPosition.Y + m_TotalTileSize.Height) - m_TotalTileSize.Height * line;
-            int lines = ((int)(rect.Y + rect.Height - 1) / m_TotalTileSize.Height) - ((int)rect.Y / m_TotalTileSize.Height) + 1;
-            int rows = (int)rect.Width / m_TotalTileSize.Width;
+            int lines = ((int)(rect.Y + rect.Height - 1) / TotalTileSize.Height) - ((int)rect.Y / TotalTileSize.Height) + 1;
+            int rows = (int)rect.Width / TotalTileSize.Width;
 
             if (lines == 0) lines = 1; // Draw at last one item in visible area.
             if (rows == 0) rows = 1;
@@ -263,8 +363,9 @@ namespace TileView
         /// <summary>
         /// Backwards compatability with ListView DrawItem event. Warning: Have a hight chance to be changed in future.
         /// </summary>
-        public event DrawItemEventHandler DrawItem;
+        public event DrawTileListItemEventHandler DrawItem;
         public event CacheItemsEventHandler CacheItems;
+        public static StringFormat TextStringFormat = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.LineLimit };
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -288,34 +389,73 @@ namespace TileView
             foreach(int i in indices)
             {
                 if (i >= VirtualListSize) throw new ArgumentException("index out of range", "i");
+                Size bs = new Size((int)m_TileBorder.Width * 2, (int)m_TileBorder.Width * 2); // border size
+                Size single = new Size(1, 1);
                 Point p = GetItemLocation(i);
-                Point mp = new Point(p.X + m_TileMargin.Left, p.Y + m_TileMargin.Top);
+                Point mp = new Point(p.X + m_TileMargin.Left , p.Y + m_TileMargin.Top); //margined point
+                Point bp = new Point(mp.X + (int)m_TileBorder.Width, mp.Y + (int)m_TileBorder.Width); //bordered point
+                Point pp = new Point(bp.X + m_TilePadding.Left, bp.Y + m_TilePadding.Top); //padded point
+                //m_TileSize + m_TilePadding.Size + bs + m_TileMargin.Size
+                Rectangle mr = new Rectangle(mp, m_TileSize + m_TilePadding.Size + bs);
+                Rectangle br = new Rectangle(bp, m_TileSize + m_TilePadding.Size);
+                Rectangle pr = new Rectangle(pp, m_TileSize);
 
-                if (this.m_SelectedIndex == i) // not sure yet on should it be in DrawItem or here...
+                if (this.SelectedIndices.Contains(i))
                 {
-                    e.Graphics.FillRectangle(m_HighlightColor, new Rectangle(mp, m_TotalTileSize - m_TileMargin.Size));
-                    //ControlPaint.DrawFocusRectangle(e.Graphics, new Rectangle(mp, m_TotalTileSize - m_TileMargin.Size));
+                    e.Graphics.FillRectangle(m_TileHighlightColor, mr);
                 }
+
                 if (DrawItem != null)
-                    DrawItem(this, new DrawItemEventArgs(e.Graphics, this.Font, new Rectangle(mp, m_TotalTileSize - m_TileMargin.Size), i, (this.m_SelectedIndex == i ? DrawItemState.Selected : DrawItemState.None)));
+                    DrawItem(this, new DrawTileListItemEventArgs(e.Graphics, this.Font, br, i, (this.m_FocusIndex == i ? DrawItemState.Selected : DrawItemState.None)));
                 else
                 {
-                    Point pp = new Point(mp.X + m_TilePadding.Left, mp.Y + m_TilePadding.Top);
-                    //e.Graphics.DrawRectangle(Pens.Pink, new Rectangle(mp, m_TotalTileSize - m_TileMargin.Size - new Size(1,1))); // border
-                    e.Graphics.FillRectangle(Brushes.Pink, new Rectangle(pp, m_TileSize)); // tile itself
+                    e.Graphics.FillRectangle(Brushes.Pink, pr); // tile itself
 
                     //TODO: Rewrite text drawing completely
                     string text = i.ToString();
-                    SizeF ts = e.Graphics.MeasureString(text, this.Font);
-                    Point tp = new Point(mp.X + m_TileSize.Width / 2 - (int)ts.Width / 2, mp.Y + m_TilePadding.Top + m_TileSize.Height + (int)ts.Height / 2);
+                    SizeF strLayout = new SizeF(TileSize.Width, TilePadding.Bottom);
+                    SizeF strSize = e.Graphics.MeasureString(text, this.Font, strLayout, TextStringFormat);
+                    PointF strPos = new PointF(br.X + (br.Width - strSize.Width) / 2, br.Top + TilePadding.Top + TileSize.Height + (strLayout.Height / 2 - strSize.Height / 2));
+                    //new RectangleF(new PointF((ImagesListView.TileSize.Width - strSize.Width) / 2 + e.Bounds.Left, e.Bounds.Y + ImagesListView.TilePadding.Top + ImagesListView.TileSize.Height + (e.Font.Height - strSize.Height / 2))
+                    if (TilePadding.Bottom - strSize.Height < 2) return; //No space for text
+                    e.Graphics.DrawString(text, this.Font, SystemBrushes.ControlText, new RectangleF(strPos, strSize), TextStringFormat);
+                }
+                
+                if (m_TileBorder.Width > 0)
+                    e.Graphics.DrawRectangle(m_TileBorder, new Rectangle(mr.Location, mr.Size - single));
 
-                    e.Graphics.DrawString(i.ToString(), this.Font, Brushes.Black, tp.X, tp.Y); // text
+                if (this.m_FocusIndex == i) // not sure yet on should it be in DrawItem or here...
+                {
+                    ControlPaint.DrawFocusRectangle(e.Graphics, mr);
                 }
             }
             //e.Graphics.DrawRectangle(new Pen(Color.FromArgb(64, Color.Black),1), new Rectangle(new Point((int)e.Graphics.ClipBounds.Location.X, (int)e.Graphics.ClipBounds.Location.Y), new Size((int)e.Graphics.ClipBounds.Width - 1, (int)e.Graphics.ClipBounds.Height-1)));
         }
+
+        public delegate void FocusSelectionChangedEventHandler(object sender, EventArgs e);
+
+        public delegate void DrawTileListItemEventHandler(object sender, DrawTileListItemEventArgs e);
+        public class DrawTileListItemEventArgs : DrawItemEventArgs
+        {
+            public DrawTileListItemEventArgs(Graphics graphics, Font font, Rectangle rect, int index, DrawItemState state)
+                : base(graphics, font, rect, index, state)
+            {
+
+            }
+
+            public void DrawText(RectangleF rect, string text)
+            {
+                SizeF strSize = this.Graphics.MeasureString(text, this.Font, rect.Size, TextStringFormat);
+                PointF strPos = new PointF(rect.X + (rect.Width - strSize.Width) / 2, rect.Y + (rect.Height / 2 - strSize.Height / 2));
+                //new RectangleF(new PointF((ImagesListView.TileSize.Width - strSize.Width) / 2 + e.Bounds.Left, e.Bounds.Y + ImagesListView.TilePadding.Top + ImagesListView.TileSize.Height + (e.Font.Height - strSize.Height / 2))
+                if (rect.Bottom - strSize.Height < 2) return; //No space for text
+                this.Graphics.DrawString(text, this.Font, SystemBrushes.ControlText, new RectangleF(strPos, strSize), TextStringFormat);
+            }
+        }
+        
     }
 
+    /* Unused
     /// <summary>
     /// For caching purposes.
     /// </summary>
@@ -338,5 +478,5 @@ namespace TileView
         {
             return string.Format("Name:{0}, ImageKey:{1}, Selected:{2}", Name, ImageKey, Selected);
         }
-    }
+    }*/
 }
